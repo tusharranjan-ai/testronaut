@@ -1,0 +1,17 @@
+# Pinned to versions with CPython 3.14 wheels.
+# pydantic 2.8.x has no cp314 wheel and cannot build (PyO3 < 3.14) — do not downpin.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlmodel==0.0.39
+pydantic==2.13.4
+pydantic-settings==2.15.0
+python-multipart==0.0.32
+httpx==0.28.1
+openapi-spec-validator==0.9.0
+pyyaml==6.0.3
+python-dotenv==1.2.3
+structlog==26.1.0
+openpyxl==3.1.5
+pytest==9.1.1
+pytest-asyncio==1.4.0
+claude-agent-sdk

@@ -1,0 +1,48 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - TESTRONAUT_DB=sqlite:///./testronaut.db
+      - TESTRONAUT_WORKSPACE=${PWD}/workspace
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OMNIROUTE_BASE_URL=http://omniroute:20128/v1
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./testronaut.db:/app/testronaut.db
+      # Same host path on both sides: runner.py hands this path to a sibling
+      # `docker run` on the host daemon, so the container's view of it must
+      # match what the host daemon can mount.
+      - ${PWD}/workspace:${PWD}/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+  # https://github.com/diegosouzapw/OmniRoute — self-hosted gateway to 350+ LLM
+  # providers behind one OpenAI-compatible endpoint. Optional: pick "OmniRoute"
+  # as a run's provider once this is up.
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    restart: unless-stopped
+    stop_grace_period: 40s
+    ports:
+      - "20128:20128"
+    volumes:
+      - omniroute-data:/app/data
+
+volumes:
+  omniroute-data:

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Database
+testronaut.db
+*.sqlite
+*.db
+
+# Environment
+.env
+.env.local
+
+# Frontend
+node_modules/
+dist/
+build/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Uploads and exports
+uploads/
+exports/
+
+# Generated Phase 2 projects
+workspace/
