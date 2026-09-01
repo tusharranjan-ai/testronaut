@@ -12,29 +12,53 @@ requirement it exercises.
 Single-user local tool. No login, no cloud, no telemetry. Runs against a local
 Ollama model by default, so a full run costs nothing and needs no API key.
 
+![Testronaut demo](docs/assets/demo.gif)
+
+▶ [Watch with voiceover](docs/assets/demo.mp4) (mp4, narrated)
+
 ## Requirements
 
 - Python 3.12–3.14
 - Node 18+
 - [Ollama](https://ollama.com) with a model pulled (`ollama pull qwen2.5:14b`),
   or an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
-- Docker, to execute generated tests. Optional — without it you can still
-  generate and download the project and run `mvn test` yourself.
+- Docker, to execute generated tests and for the Docker Compose setup below.
+  Optional — without it you can still generate and download the project and
+  run `mvn test` yourself.
 
-## Setup
+## Installation
+
+### Option A — Docker Compose (fastest)
 
 ```bash
+git clone https://github.com/tusharranjan-ai/testronaut.git
+cd testronaut
+
+cp .env.example .env        # optional; every value has a default
+docker compose up --build
+```
+
+Frontend: http://localhost:8080. Backend: http://localhost:8000. Ollama on the
+host is reached automatically via `host.docker.internal`.
+
+### Option B — Run locally
+
+```bash
+git clone https://github.com/tusharranjan-ai/testronaut.git
+cd testronaut
+
+# Backend
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 
+# Frontend
 cd frontend && npm install && cd ..
 
-cp .env.example .env        # optional; every value has a default
+# Config (optional; every value has a default)
+cp .env.example .env
 ```
 
-## Run
-
-Two terminals:
+Start both in separate terminals:
 
 ```bash
 .venv/bin/uvicorn backend.main:app --reload --port 8000
