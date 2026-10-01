@@ -177,8 +177,36 @@ Generated code runs in a container with `--cap-drop ALL`, no new privileges, and
 a memory and PID ceiling. It is never run on the host: it came from a model that
 read a spec you did not write.
 
+## Security and trust model
+
+Testronaut is a **single-user tool for your own machine**. It has no
+authentication, by design — so do not expose port 8000 to a network you do not
+control. Specifically:
+
+- **No auth on the API.** Anyone who can reach the backend can read every spec
+  and run every endpoint. Keep it bound to localhost.
+- **Fetch-by-URL is server-side.** `POST /api/specs?url=…` is fetched by the
+  backend, so it reaches whatever the backend can reach, including private
+  addresses. Only paste spec URLs you trust.
+- **Compose mounts the Docker socket.** The backend launches the test sandbox,
+  which needs `/var/run/docker.sock`. That is root-equivalent access to the
+  host, so only run the Compose stack on a machine you own.
+- **Generated code is untrusted** and runs only in a container, with
+  `--cap-drop ALL`, no new privileges, and memory and PID ceilings — never on
+  the host.
+- **Credentials you enter for a run** are written to the generated project's
+  `src/test/resources/testronaut.properties` and never stored in the database.
+  That file is gitignored in the generated project; inject secrets via `-D` in
+  CI instead of committing them.
+- **Your API keys** live only in `.env`, which is gitignored. Nothing is sent
+  anywhere except the model provider you select.
+
 ## Not in v1
 
 Browser/UI testing, multi-user auth, cloud hosting. The approved-case JSON schema
 is language-agnostic, so a pytest or Playwright generator is a sibling of
 `backend/codegen.py`, not a change to the data model.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

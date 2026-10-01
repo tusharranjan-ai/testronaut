@@ -1041,6 +1041,9 @@ def test_codegen_writes_a_complete_maven_project(session, run, tmp_path):
 
     assert "http://localhost:9999" in (tmp_path / "src/test/resources/testronaut.properties").read_text()
 
+    # The properties file holds the run's credentials; committing it would leak them.
+    assert "src/test/resources/testronaut.properties" in (tmp_path / ".gitignore").read_text()
+
 
 def test_codegen_maps_methods_back_to_case_ids(session, run, tmp_path):
     """Surefire reports methods; the report view needs case IDs."""
