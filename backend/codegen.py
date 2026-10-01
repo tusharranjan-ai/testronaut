@@ -415,6 +415,9 @@ Override any value without editing the file:
 mvn test -DbaseUrl=https://staging.example.com -DauthValue=$TOKEN
 ```
 
+`testronaut.properties` is gitignored, because it is where a real credential
+ends up. Inject secrets with `-D` in CI rather than committing them.
+
 ## Regenerating
 
 These files are generated. Edit the test case in Testronaut and regenerate — edits
@@ -471,12 +474,16 @@ def generate_project(run_id: int, session: Session, target_dir: Path,
     (root / "testng.xml").write_text(_testng_xml(class_names), encoding="utf-8")
     (root / "src" / "test" / "resources" / "testronaut.properties").write_text(
         _properties(base_url, project.placeholders, test_data or {}), encoding="utf-8")
+    # The properties file is the one place a real credential lands. Ship the
+    # ignore rule with it, so "commit the generated project" cannot leak it.
+    (root / ".gitignore").write_text(
+        "target/\nsrc/test/resources/testronaut.properties\n", encoding="utf-8")
 
     project.test_count = len(cases)
     project.endpoint_count = len(by_endpoint)
     project.files += [f"src/test/java/{PACKAGE.replace('.', '/')}/Config.java",
                       "pom.xml", "testng.xml", "src/test/resources/testronaut.properties",
-                      "README.md"]
+                      ".gitignore", "README.md"]
     (root / "README.md").write_text(_readme(run, project), encoding="utf-8")
     (root / "testronaut-map.json").write_text(
         json.dumps({"run_id": run_id, "methods": project.method_map}, indent=2), encoding="utf-8")
