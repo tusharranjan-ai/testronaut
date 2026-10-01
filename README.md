@@ -14,7 +14,9 @@ Ollama model by default, so a full run costs nothing and needs no API key.
 
 ![Testronaut demo](docs/assets/demo.gif)
 
-▶ [Watch with voiceover](docs/assets/demo.mp4) (mp4, narrated)
+Narrated walkthrough:
+
+https://github.com/user-attachments/assets/1dafdc8b-13f6-47e0-8609-afdd2a5236b3
 
 ## Requirements
 
