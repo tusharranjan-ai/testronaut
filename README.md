@@ -1,5 +1,8 @@
 # Testronaut
 
+[![CI](https://github.com/tusharranjan-ai/testronaut/actions/workflows/ci.yml/badge.svg)](https://github.com/tusharranjan-ai/testronaut/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 AI-driven test case generation from OpenAPI specs, with a human in the loop
 twice. Spec → functional requirements → **you approve** → test cases → **you
 approve** → export to JSON or Excel.
@@ -38,8 +41,10 @@ cp .env.example .env        # optional; every value has a default
 docker compose up --build
 ```
 
-Frontend: http://localhost:8080. Backend: http://localhost:8000. Ollama on the
-host is reached automatically via `host.docker.internal`.
+Frontend: http://localhost:8080. Backend: http://localhost:8000 (both bound to
+localhost only). Ollama on the host is reached automatically via
+`host.docker.internal`. OmniRoute is optional:
+`docker compose --profile omniroute up`.
 
 ### Option B — Run locally
 
@@ -180,26 +185,37 @@ read a spec you did not write.
 ## Security and trust model
 
 Testronaut is a **single-user tool for your own machine**. It has no
-authentication, by design — so do not expose port 8000 to a network you do not
-control. Specifically:
+authentication, by design, so do not expose it to a network you do not control.
 
-- **No auth on the API.** Anyone who can reach the backend can read every spec
-  and run every endpoint. Keep it bound to localhost.
-- **Fetch-by-URL is server-side.** `POST /api/specs?url=…` is fetched by the
-  backend, so it reaches whatever the backend can reach, including private
-  addresses. Only paste spec URLs you trust.
+- **Localhost only.** The Compose file publishes ports 8000, 8080 (and 20128 for
+  OmniRoute) on `127.0.0.1` only. Don't change that to `0.0.0.0`: anyone who can
+  reach the API can read every spec, edit generated test code and run it.
+- **Fetch-by-URL is guarded.** `POST /api/specs?url=…` is fetched by the backend.
+  Only `http(s)` is allowed, every address (and every redirect hop) must be
+  public, and the response is capped at 5 MB. To fetch a spec from your own
+  network or `localhost`, set `TESTRONAUT_ALLOW_PRIVATE_URLS=1`. Uploads are
+  capped at 10 MB.
 - **Compose mounts the Docker socket.** The backend launches the test sandbox,
-  which needs `/var/run/docker.sock`. That is root-equivalent access to the
-  host, so only run the Compose stack on a machine you own.
-- **Generated code is untrusted** and runs only in a container, with
-  `--cap-drop ALL`, no new privileges, and memory and PID ceilings — never on
-  the host.
+  which needs `/var/run/docker.sock`. That is root-equivalent access to the host,
+  so only run the Compose stack on a machine you own. Running the backend locally
+  (Option B) avoids giving a container the socket.
+- **Generated code is untrusted.** It came from a model that read a spec you did
+  not write, so it runs only in a container with `--cap-drop ALL`, no new
+  privileges, and memory and PID ceilings. It is never run on the host.
+  Two limits to know about: the container *can* reach the network (Maven has to
+  download dependencies, and the tests have to reach your API), and the API
+  refuses `--network host` / `container:` modes but allows named networks, so a
+  hostile spec could still make generated tests call out. Review generated files
+  in the UI before running them.
 - **Credentials you enter for a run** are written to the generated project's
   `src/test/resources/testronaut.properties` and never stored in the database.
-  That file is gitignored in the generated project; inject secrets via `-D` in
+  That file is gitignored in the generated project; inject secrets with `-D` in
   CI instead of committing them.
-- **Your API keys** live only in `.env`, which is gitignored. Nothing is sent
-  anywhere except the model provider you select.
+- **Your API keys** live only in `.env`, which is gitignored. Specs and prompts
+  are sent to the model provider you select (Ollama keeps them on your machine;
+  OpenAI and Anthropic do not), and to nobody else.
+
+Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 ## Not in v1
 
@@ -209,4 +225,4 @@ is language-agnostic, so a pytest or Playwright generator is a sibling of
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Contributions: [CONTRIBUTING](CONTRIBUTING.md).

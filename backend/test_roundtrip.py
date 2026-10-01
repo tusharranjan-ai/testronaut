@@ -913,13 +913,14 @@ async def test_case_generation_budget_scales_with_requirement_count(session, run
     assert seen[0] > 4000
 
 
-def test_critic_can_run_on_a_different_provider_than_the_generator(session, run):
+def test_critic_can_run_on_a_different_provider_than_the_generator(session, run, monkeypatch):
     """
     Generate free on a local model, review with a strong hosted one. Before
     reviewer_provider existed the critic was pinned to the generator's provider.
     """
     from backend.llm import get_provider
 
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")      # CI has no real key
     run.provider = "ollama"
     run.model = "qwen2.5:14b"
     run.reviewer_provider = "openai"
@@ -1164,3 +1165,97 @@ def test_sandbox_command_drops_privileges_and_caps_resources():
     assert "--security-opt no-new-privileges" in cmd
     assert "--memory 2g" in cmd
     assert "--rm" in cmd
+
+
+# ---------- network guards ----------
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8000/api/specs",
+    "http://localhost/openapi.json",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/spec.json",
+    "http://192.168.1.1/spec.json",
+    "http://[::1]/spec.json",
+    "http://[::ffff:127.0.0.1]/spec.json",
+    "file:///etc/passwd",
+    "ftp://example.com/spec.json",
+    "http:///nohost",
+])
+def test_private_and_non_http_spec_urls_are_refused(url, monkeypatch):
+    from backend.netguard import UnsafeURL, check_url
+    monkeypatch.delenv("TESTRONAUT_ALLOW_PRIVATE_URLS", raising=False)
+    with pytest.raises(UnsafeURL):
+        check_url(url)
+
+
+def test_private_spec_urls_can_be_opted_into(monkeypatch):
+    from backend.netguard import check_url
+    monkeypatch.setenv("TESTRONAUT_ALLOW_PRIVATE_URLS", "1")
+    check_url("http://127.0.0.1:8000/openapi.json")
+
+
+async def test_redirect_to_a_private_address_is_refused(monkeypatch):
+    import httpx
+    from backend.netguard import UnsafeURL, fetch_spec_url
+    monkeypatch.delenv("TESTRONAUT_ALLOW_PRIVATE_URLS", raising=False)
+    monkeypatch.setattr("backend.netguard.socket.getaddrinfo",
+                        lambda host, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
+                        if host == "public.example" else [(2, 1, 6, "", ("127.0.0.1", 80))])
+
+    def handler(request):
+        return httpx.Response(302, headers={"location": "http://internal.example/secret"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(UnsafeURL):
+            await fetch_spec_url("http://public.example/spec.json", client)
+
+
+async def test_public_spec_url_is_fetched_and_size_capped(monkeypatch):
+    import httpx
+    from backend import netguard
+    monkeypatch.delenv("TESTRONAUT_ALLOW_PRIVATE_URLS", raising=False)
+    monkeypatch.setattr(netguard.socket, "getaddrinfo",
+                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, text='{"openapi": "3.0.0"}'))) as client:
+        assert "openapi" in await netguard.fetch_spec_url("http://public.example/s.json", client)
+
+    monkeypatch.setattr(netguard, "MAX_SPEC_BYTES", 10)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, text="x" * 100))) as client:
+        with pytest.raises(netguard.UnsafeURL):
+            await netguard.fetch_spec_url("http://public.example/s.json", client)
+
+
+@pytest.mark.parametrize("network", ["host", "HOST", "container:abc", "--privileged", "a b", "../x"])
+def test_dangerous_docker_networks_are_refused(network):
+    from backend.netguard import validate_docker_network
+    with pytest.raises(ValueError):
+        validate_docker_network(network)
+
+
+@pytest.mark.parametrize("network", [None, "", "bridge", "none", "my-net_1.x"])
+def test_ordinary_docker_networks_are_allowed(network):
+    from backend.netguard import validate_docker_network
+    assert validate_docker_network(network) == (network or None)
+
+
+def test_properties_values_cannot_inject_extra_keys():
+    from backend.codegen import _properties
+    out = _properties("http://x", [], {"authValue": "tok\nadminPassword=pwned", "k": "a\\b"})
+    assert "\nadminPassword=" not in out
+    assert "authValue=tok\\nadminPassword=pwned" in out
+    assert "k=a\\\\b" in out
+
+
+def test_oversized_upload_is_rejected(client):
+    r = client.post("/api/specs", files={"file": ("big.json", b"x" * (10 * 1024 * 1024 + 1))})
+    assert r.status_code == 413
+
+
+def test_spec_url_to_loopback_is_a_400(client, monkeypatch):
+    monkeypatch.delenv("TESTRONAUT_ALLOW_PRIVATE_URLS", raising=False)
+    r = client.post("/api/specs", params={"url": "http://127.0.0.1:1/x.json"})
+    assert r.status_code == 400
+    assert "private" in r.json()["detail"]
