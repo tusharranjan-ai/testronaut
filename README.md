@@ -43,7 +43,8 @@ docker compose up --build
 
 Frontend: http://localhost:8080. Backend: http://localhost:8000 (both bound to
 localhost only). Ollama on the host is reached automatically via
-`host.docker.internal`. OmniRoute is optional:
+`host.docker.internal` (on Linux, Ollama must listen on more than loopback; see
+[docs/PROVIDERS.md](docs/PROVIDERS.md)). OmniRoute is optional:
 `docker compose --profile omniroute up`.
 
 ### Option B — Run locally
@@ -114,7 +115,8 @@ grammar, the generated Java, and Surefire report parsing.
 ## Configuration
 
 See `.env.example`. Every value has a working default; the file is only needed
-for API keys.
+for API keys. Step-by-step setup for Ollama, OpenAI, Anthropic and OmniRoute,
+including where to get each key: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## How it works
 
