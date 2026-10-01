@@ -4,7 +4,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      # Loopback only: the API has no auth, and this container holds the Docker
+      # socket. Do not widen this to 0.0.0.0 on a shared network.
+      - "127.0.0.1:8000:8000"
     environment:
       - TESTRONAUT_DB=sqlite:///./testronaut.db
       - TESTRONAUT_WORKSPACE=${PWD}/workspace
@@ -28,19 +30,22 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       - backend
 
   # https://github.com/diegosouzapw/OmniRoute — self-hosted gateway to 350+ LLM
   # providers behind one OpenAI-compatible endpoint. Optional: pick "OmniRoute"
   # as a run's provider once this is up.
+  # Behind a profile so it does not start (or pull a third-party image) unless you
+  # ask for it: `docker compose --profile omniroute up`.
   omniroute:
+    profiles: ["omniroute"]
     image: diegosouzapw/omniroute:latest
     restart: unless-stopped
     stop_grace_period: 40s
     ports:
-      - "20128:20128"
+      - "127.0.0.1:20128:20128"
     volumes:
       - omniroute-data:/app/data
 

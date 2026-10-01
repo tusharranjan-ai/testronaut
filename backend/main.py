@@ -19,12 +19,14 @@ from typing import Any, Optional
 import structlog
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.background import BackgroundTask
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field as PydField
 from sqlmodel import Session, select
 
 from .agent import require_sdk
 from .codegen import generate_project
+from .netguard import UnsafeURL, fetch_spec_url, validate_docker_network
 from .runner import SandboxUnavailable, docker_available, parse_surefire, run_tests
 from .db import (
     ArtifactOrigin, ArtifactStatus, Category, GenerationRun, Provider, Requirement,
@@ -221,22 +223,33 @@ def _endpoints_for_run(session: Session, run: GenerationRun) -> list[dict]:
 
 # ---------- specs ----------
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+async def _read_upload(file: UploadFile, limit: int) -> bytes:
+    """Read an upload, refusing anything over `limit` rather than buffering it all."""
+    data = await file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(413, f"File is larger than {limit // (1024 * 1024)} MB.")
+    return data
+
+
 @app.post("/api/specs", response_model=Spec, status_code=201)
 async def create_spec(file: Optional[UploadFile] = File(None),
                       url: Optional[str] = None,
                       session: Session = Depends(get_session)):
     """Upload by file (multipart) or by URL (?url=... or a JSON body)."""
     if file is not None:
-        raw = (await file.read()).decode("utf-8", errors="replace")
+        raw = (await _read_upload(file, MAX_UPLOAD_BYTES)).decode("utf-8", errors="replace")
         source, source_ref, name_hint = "file", file.filename or "upload", file.filename or ""
     elif url:
-        async with __import__("httpx").AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-            except Exception as e:
-                raise HTTPException(400, f"Could not fetch {url}: {e}")
-        raw, source, source_ref, name_hint = resp.text, "url", url, url
+        try:
+            raw = await fetch_spec_url(url)
+        except UnsafeURL as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(400, f"Could not fetch {url}: {e}")
+        source, source_ref, name_hint = "url", url, url
     else:
         raise HTTPException(400, "Provide a multipart `file` or a `url`.")
 
@@ -868,10 +881,11 @@ async def export_run(run_id: int, format: str = Query("json", pattern="^(json|xl
         return JSONResponse(payload, headers={
             "Content-Disposition": f'attachment; filename="testronaut-run-{run_id}.json"'})
 
-    path = os.path.join(tempfile.gettempdir(), f"testronaut-run-{run_id}.xlsx")
+    fd, path = tempfile.mkstemp(prefix=f"testronaut-run-{run_id}-", suffix=".xlsx")
+    os.close(fd)
     to_xlsx(run_id, session, path, only_approved=only_approved)
     return FileResponse(
-        path, filename=f"testronaut-run-{run_id}.xlsx",
+        path, background=BackgroundTask(os.remove, path), filename=f"testronaut-run-{run_id}.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
@@ -880,13 +894,16 @@ async def import_run(run_id: int, file: UploadFile = File(...),
                      session: Session = Depends(get_session)):
     _run_or_404(session, run_id)
     name = (file.filename or "").lower()
-    content = await file.read()
+    content = await _read_upload(file, MAX_UPLOAD_BYTES)
 
     if name.endswith(".xlsx"):
-        path = os.path.join(tempfile.gettempdir(), f"testronaut-import-{run_id}.xlsx")
-        with open(path, "wb") as fh:
-            fh.write(content)
-        summary = from_xlsx(run_id, session, path)
+        fd, path = tempfile.mkstemp(prefix=f"testronaut-import-{run_id}-", suffix=".xlsx")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content)
+            summary = from_xlsx(run_id, session, path)
+        finally:
+            os.remove(path)
     elif name.endswith(".json") or not name:
         try:
             data = json.loads(content.decode("utf-8"))
@@ -920,9 +937,11 @@ async def download_project(run_id: int, session: Session = Depends(get_session))
     project = workspace(run_id)
     if not (project / "pom.xml").exists():
         raise HTTPException(404, "No generated project for this run. Generate it first.")
-    archive = shutil.make_archive(
-        os.path.join(tempfile.gettempdir(), f"testronaut-run-{run_id}"), "zip", project)
-    return FileResponse(archive, filename=f"testronaut-run-{run_id}.zip",
+    base = os.path.join(tempfile.mkdtemp(prefix="testronaut-zip-"), f"testronaut-run-{run_id}")
+    archive = shutil.make_archive(base, "zip", project)
+    return FileResponse(archive, background=BackgroundTask(shutil.rmtree, os.path.dirname(archive),
+                                                           ignore_errors=True),
+                        filename=f"testronaut-run-{run_id}.zip",
                         media_type="application/zip")
 
 
@@ -972,7 +991,8 @@ async def execute(run_id: int, body: ExecuteRequest, session: Session = Depends(
     if not (project / "pom.xml").exists():
         raise HTTPException(409, "No generated project for this run. Generate it first.")
     try:
-        result = await run_tests(project, timeout=body.timeout, network=body.network)
+        network = validate_docker_network(body.network)
+        result = await run_tests(project, timeout=min(max(body.timeout, 1.0), 3600.0), network=network)
     except SandboxUnavailable as e:
         raise HTTPException(503, str(e))
     except ValueError as e:

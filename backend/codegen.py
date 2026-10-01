@@ -361,24 +361,29 @@ def _testng_xml(class_names: list[str]) -> str:
 """
 
 
+def _prop(value: object) -> str:
+    """One .properties value on one line: a newline would otherwise inject extra keys."""
+    return str(value).replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+
+
 def _properties(base_url: str, placeholders: list[str], test_data: dict) -> str:
     lines = [
         "# Everything the OpenAPI spec cannot tell us.",
         "# Override any value at run time with -Dkey=value.",
         "",
-        f"baseUrl={base_url}",
+        f"baseUrl={_prop(base_url)}",
         "",
         "# Optional auth applied to every request.",
-        f"authHeader={test_data.get('authHeader', '')}",
-        f"authValue={test_data.get('authValue', '')}",
+        f"authHeader={_prop(test_data.get('authHeader', ''))}",
+        f"authValue={_prop(test_data.get('authValue', ''))}",
     ]
     extras = sorted(set(placeholders) - {"baseUrl", "authHeader", "authValue"})
     if extras:
         lines += ["", "# Referenced as ${...} by the generated tests."]
-        lines += [f"{key}={test_data.get(key, '')}" for key in extras]
+        lines += [f"{key}={_prop(test_data.get(key, ''))}" for key in extras]
     for key, value in sorted(test_data.items()):
         if key not in extras and key not in {"authHeader", "authValue"}:
-            lines.append(f"{key}={value}")
+            lines.append(f"{_prop(key)}={_prop(value)}")
     return "\n".join(lines) + "\n"
 
 
