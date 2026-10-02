@@ -1,14 +1,20 @@
 # Testronaut — High Level Design (v1)
 
 **Scope:** OpenAPI spec ingestion through approved, exportable test cases.
-**Out of scope:** automation codegen, execution, reporting, UI testing. See [PLAN.md](./PLAN.md).
+**Out of scope for this document:** automation codegen, execution, reporting, UI testing.
+See [PLAN.md](./PLAN.md).
+
+> **Status:** this is the original v1 design, kept for its reasoning. Codegen, the Docker
+> sandbox and reports were built afterwards (see [REVIEW.md](./REVIEW.md) "Phase 2"), and
+> OmniRoute was added as a fifth provider. Where this document and the code differ, the
+> code and the README win. Corrections to specific statements are marked inline.
 
 ---
 
 ## 1. System context
 
-Testronaut is a **single-user local application**. There is no auth, no tenancy, and no
-network exposure beyond localhost.
+Testronaut is a **single-user local application**. There is no auth and no tenancy, so it
+must stay on localhost: the Docker Compose file binds every port to `127.0.0.1`.
 
 ```
 ┌──────────┐   uploads spec    ┌──────────────────────┐
@@ -22,13 +28,15 @@ network exposure beyond localhost.
                     ▼                  ▼                  ▼
             ┌───────────────┐  ┌──────────────┐  ┌────────────────┐
             │ Claude Agent  │  │  Anthropic / │  │  Ollama        │
-            │ SDK (subscr.) │  │  OpenAI API  │  │  localhost:11434│
+            │ SDK (API key) │  │  OpenAI API  │  │  localhost:11434│
             └───────────────┘  └──────────────┘  └────────────────┘
                           external LLM providers
 ```
 
-The only outbound traffic is to the selected LLM provider. Choosing the local Qwen
-provider makes the system fully offline.
+Outbound traffic goes to the selected LLM provider, to a spec URL if you fetch one (public
+addresses only, see the README's trust model), and, when you run generated tests, to the
+Docker sandbox's network (Maven dependencies and the system under test). Choosing the local
+Ollama provider and uploading specs by file keeps spec content on your machine.
 
 ---
 
@@ -52,7 +60,7 @@ Three tiers, deliberately thin.
 │  ┌────────────┐ ┌───────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │
 │  │spec_parser │ │ generator │ │  llm /   │ │ reviewer │ │exporter│ │
 │  │            │ │(reqs+cases)│ │  agent   │ │+ trace-  │ │json +  │ │
-│  │            │ │           │ │(4 prov)  │ │ability   │ │xlsx    │ │
+│  │            │ │           │ │(5 prov)  │ │ability   │ │xlsx    │ │
 │  └────────────┘ └───────────┘ └──────────┘ └──────────┘ └────────┘ │
 │                          ┌──────────────┐                          │
 │                          │  db (SQLModel)│                         │
@@ -72,17 +80,20 @@ point of v1. Two tiers plus a file database is the minimum that satisfies both.
 
 | Component | Responsibility | Key dependency |
 |---|---|---|
-| `spec_parser` | OpenAPI 3.x → normalized endpoint list; resolve `$ref`; flatten schemas with a depth limit | PyYAML, jsonref |
-| `llm` | Probe provider availability, list models, dispatch a prompt to the selected provider | anthropic, openai |
+| `spec_parser` | OpenAPI 3.x → normalized endpoint list; resolve local `$ref`s; flatten schemas with a depth limit | PyYAML, openapi-spec-validator |
+| `llm` | Probe provider availability, list models, dispatch a prompt to the selected provider | httpx |
 | `agent` | Agent SDK path: per-stage MCP tools, `PreToolUse` hooks, restricted sessions | claude-agent-sdk |
 | `generator` | Build per-endpoint prompts for both stages, orchestrate the run, persist artifacts | pydantic |
 | `reviewer` | Run the critic pass per endpoint, snapshot-then-revise, deterministic traceability | pydantic |
 | `exporter` | Serialize requirements + cases to JSON and Excel; parse both back with a merge summary | openpyxl |
 | `db` | SQLModel table definitions, engine, session | sqlmodel |
-| `main` | HTTP routes, SSE streaming, static file serving | fastapi, uvicorn |
+| `main` | HTTP routes, SSE streaming (the built frontend is served by nginx, not by FastAPI) | fastapi, uvicorn |
 
-Eight backend modules. Each has one job; `reviewer` is the only one both `generator` and
-`agent` call into, since the traceability check is provider-independent.
+Eight backend modules in the v1 design. Each has one job; `reviewer` is the only one both
+`generator` and `agent` call into, since the traceability check is provider-independent.
+Four more were added later: `assertions` (assertion-grammar compiler), `codegen` (Maven +
+TestNG project), `runner` (Docker sandbox and Surefire parsing) and `netguard` (spec-URL
+and Docker-network guards).
 
 ---
 
@@ -221,13 +232,15 @@ a single endpoint, and blast-radius containment when one endpoint's generation f
 
 ### 5.2 Provider abstraction at one function
 
-**Decision:** all providers sit behind `generate_cases(endpoint, categories, provider, model)
--> list[CaseModel]`, returning validated models rather than raw text.
+**Decision:** all providers sit behind one `LLM.complete(system, user, ...)` call returning
+raw text, which the generator then validates into models. (The original design named a
+`generate_cases(...)` function; the shipped entry points are
+`generate_requirements_for_endpoint` and `generate_cases_for_endpoint`.)
 
-Ollama exposes an OpenAI-compatible endpoint, so the OpenAI client covers **both** OpenAI
-and local Qwen with only a `base_url` change — three raw paths collapse to two. The Agent
-SDK is the fourth and behaves differently enough (tools, hooks) to warrant its own branch
-behind the same signature.
+The raw providers (Ollama's native chat API, OpenAI, Anthropic and the OpenAI-compatible
+OmniRoute gateway) are each a URL, a header dict and a payload shape inside one `httpx`
+client, with no per-provider SDK. The Agent SDK behaves differently enough (tools, hooks) to
+warrant its own branch behind the same interface.
 
 **Ollama is the default:** free, offline, no key, and free of the licensing constraint in
 §5.4.
@@ -380,9 +393,9 @@ it.
 
 ---
 
-## 8. Phase 2 preview
+## 8. Phase 2 preview (since built)
 
-Not built, recorded so v1 does not foreclose it.
+Recorded so v1 would not foreclose it; all of it now exists.
 
 ```
 approved cases ──▶ codegen ──▶ Maven project (TestNG + REST Assured)
@@ -397,4 +410,4 @@ approved cases ──▶ codegen ──▶ Maven project (TestNG + REST Assured)
 ```
 
 Execution belongs in Docker because generated code is untrusted and should not run on the
-host. Docker is not currently installed, which is acceptable because v1 executes nothing.
+host. This was built after v1: see `backend/runner.py` and the README's security section.
