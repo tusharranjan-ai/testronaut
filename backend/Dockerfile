@@ -1,7 +1,7 @@
 # Docker CLI binary only — the backend shells out to the host's Docker
 # Desktop daemon to sandbox generated test runs (see runner.py); it never
 # runs its own daemon.
-FROM docker:27-cli AS dockercli
+FROM docker:28-cli AS dockercli
 
 FROM python:3.12-slim
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
