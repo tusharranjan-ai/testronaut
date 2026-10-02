@@ -1,8 +1,10 @@
 # Testronaut — Project Plan (v1)
 
-**Repository:** `tusharranjan-ai/testronaut` (private)
+**Repository:** `tusharranjan-ai/testronaut`
 **Date:** 2026-08-23
-**Status:** Planning
+**Status:** Historical. This is the original v1 plan, kept for the reasoning behind the
+design. All of it has since been built, plus codegen, execution and reports (see
+[REVIEW.md](./REVIEW.md)). Where it differs from the code, the code and the README win.
 
 ---
 
@@ -65,9 +67,9 @@ API is supposed to do*, and *how to test it*. Splitting them pays off three ways
 
 Named so that scope creep has to be a decision rather than a drift.
 
-- TestNG / Java automation codegen
-- Docker execution sandbox
-- Test result reports
+- TestNG / Java automation codegen *(built afterwards, see REVIEW.md "Phase 2")*
+- Docker execution sandbox *(built afterwards)*
+- Test result reports *(built afterwards)*
 - Browser / UI testing
 - Multi-user auth, roles, teams
 - Cloud hosting
@@ -76,17 +78,15 @@ v1 is a **single-user local tool**. No login.
 
 ---
 
-## 3. Environment findings
+## 3. Constraints
 
-Checked before planning. Two of these changed the design.
+Two constraints shaped the design.
 
-| Component | Status | Consequence |
-|---|---|---|
-| Java 24 + Maven 3.9.9 | Installed | Generated TestNG projects will run locally — Phase 2 concern |
-| Ollama, `qwen2.5:14b` | Running, 32k ctx | Zero-cost local provider; **its context limit drives per-endpoint generation** |
-| `OPENAI_API_KEY` | Set | Works today, no setup |
-| Anthropic API key / `ant` CLI | Absent | Claude reachable only via the Agent SDK route |
-| Docker | Not installed | No blocker — v1 executes nothing |
+- **Local model context.** The default local model, `qwen2.5:14b` via Ollama, has a
+  32k context window. That limit drives per-endpoint generation: one LLM call per
+  endpoint, never one per spec.
+- **Claude access.** Claude is reachable only through an API key (see below), not a
+  Claude subscription. That is why a local model is the default.
 
 ### Finding: Claude subscription vs API access
 
@@ -204,7 +204,7 @@ black box; the point of the review stage is that it is inspectable.
 | Backend | Python + FastAPI | Strong spec-parsing ecosystem; SSE is first-class |
 | Frontend | React + Vite + TypeScript | Fast iteration, typed API client |
 | Database | SQLite via SQLModel | Zero infra; SQLModel collapses table + API schema into one class |
-| LLM provider | Selectable in UI, 4 options; **Ollama is the default** | Free, offline, no key, no licensing question |
+| LLM provider | Selectable in UI, 4 options at the time (OmniRoute was added later); **Ollama is the default** | Free, offline, no key, no licensing question |
 | Agent SDK role | Guardrail host, not just a text generator | Restricted tools + validated MCP tool + hooks; see §9 |
 | Methodology | A `SKILL.md`, not a Python string | Versioned and PR-reviewable; shared by every provider path |
 | Requirements granularity | Per endpoint | Matches case generation; keeps 32k local context viable |
@@ -310,9 +310,6 @@ requirement links survive the trip.
   `description` field can carry prompt-injection text. Spec content is passed as data
   with instructions held outside it, and all output is human-reviewed before use.
 - Specs often carry real auth details. The SQLite DB, uploads, and exports are gitignored.
-- **Action required:** the `GITHUB_TOKEN` was echoed into a terminal transcript during
-  the initial clone. It has been scrubbed from `.git/config` and moved to the macOS
-  Keychain, but it should still be rotated at github.com/settings/tokens.
 
 ---
 
@@ -374,9 +371,10 @@ and both transports move together.
 
 ---
 
-## 10. Phase 2 preview (not built yet)
+## 10. Phase 2 preview (since built)
 
-Recorded so v1 does not paint us into a corner.
+Recorded so v1 would not paint us into a corner. All four items below were built;
+see REVIEW.md "Phase 2" for what shipped.
 
 - **Codegen:** approved cases → TestNG + Java project (Maven), REST Assured for HTTP.
 - **Test data:** prompt the user for the data each case needs before generating code.
