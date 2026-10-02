@@ -3,6 +3,11 @@
 Companion to [HLD.md](./HLD.md). This document specifies schemas, signatures, and
 contracts precisely enough to implement against.
 
+> **Status:** this is the original v1 design contract. The implementation followed it and
+> then diverged in places; [REVIEW.md](./REVIEW.md) lists the deliberate deviations, and
+> the codegen, sandbox and report work (Phase 2) came after it. Statements below that no
+> longer match the code carry a **Now:** note. Where in doubt, the code and the README win.
+
 ---
 
 ## 1. Repository layout
@@ -10,10 +15,8 @@ contracts precisely enough to implement against.
 ```
 testronaut/
 ├── docs/
-│   ├── PLAN.md
-│   ├── HLD.md
-│   ├── LLD.md
-│   └── REVIEW.md
+│   ├── PLAN.md  HLD.md  LLD.md  REVIEW.md  PROVIDERS.md
+│   └── assets/                  demo.gif, demo.mp4
 ├── .claude/
 │   ├── skills/
 │   │   ├── requirements-authoring/SKILL.md   drafts FRs from a spec endpoint
@@ -26,31 +29,27 @@ testronaut/
 ├── backend/
 │   ├── main.py              FastAPI app, routes, SSE
 │   ├── db.py                SQLModel models, engine, session
-│   ├── spec_parser.py       OpenAPI → Endpoint list; op_token()
+│   ├── spec_parser.py       OpenAPI → endpoint list; op_token()
 │   ├── llm.py               provider probe + dispatch (raw providers)
 │   ├── agent.py             Agent SDK path: per-stage MCP tools + hooks
 │   ├── generator.py         stage 1+2 prompts, orchestration, persistence
 │   ├── reviewer.py          critic pass, snapshot+revise, traceability check
 │   ├── exporter.py          JSON/XLSX export and import (both artifacts)
+│   ├── assertions.py        assertion grammar → REST Assured matchers (Phase 2)
+│   ├── codegen.py           approved cases → Maven + TestNG project (Phase 2)
+│   ├── runner.py            Docker sandbox + Surefire parsing (Phase 2)
+│   ├── netguard.py          spec-URL and Docker-network guards
 │   ├── test_roundtrip.py
 │   ├── requirements.txt
-│   └── testronaut.db        (gitignored)
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── api.ts           typed client
-│   │   ├── types.ts         mirrors backend schemas
-│   │   └── screens/
-│   │       ├── SpecList.tsx
-│   │       ├── RunConfig.tsx
-│   │       ├── Progress.tsx
-│   │       ├── RequirementsReview.tsx   Gate 1 + findings panel
-│   │       └── CaseReview.tsx           Gate 2 + findings panel + coverage
-│   ├── package.json
-│   └── vite.config.ts
+│   └── Dockerfile
+├── frontend/                React + Vite + TypeScript, nginx.conf, Dockerfile
+├── examples/petstore-mini.json
+├── scripts/make_demo_video.sh
+├── docker-compose.yml
 ├── .env.example
 ├── .gitignore
-└── README.md
+├── README.md  SECURITY.md  CONTRIBUTING.md  LICENSE
+└── .github/                 CI, CodeQL, Dependabot, templates, CODEOWNERS
 ```
 
 `backend/requirements.txt` is the Python dependency lockfile — unrelated to the
@@ -85,7 +84,7 @@ re-derive endpoints without a re-upload.
 |---|---|---|
 | `id` | int PK | |
 | `spec_id` | int FK → spec | |
-| `provider` | str | `claude_agent_sdk` \| `anthropic` \| `openai` \| `ollama` |
+| `provider` | str | `claude_agent_sdk` \| `anthropic` \| `openai` \| `ollama` \| `omniroute` (added after this design) |
 | `model` | str | resolved model id for generation |
 | `reviewer_model` | str? | resolved model id for review, if different — a stronger critic than generator is a legitimate choice |
 | `categories` | str | JSON array of selected categories |
@@ -176,6 +175,9 @@ matching semantics that were already specified.
 
 JSON-bearing columns are stored as `str` because SQLite has no native JSON type;
 serialization is handled at the API boundary so callers always see real objects.
+
+**Now:** the models use real JSON columns (SQLAlchemy `Column(JSON)` on SQLite's JSON1), so
+callers work with lists and dicts directly. See REVIEW.md, deviation 1.
 
 ### 2.5 `op_token()` — deterministic operation identifiers
 
@@ -371,18 +373,22 @@ All routes prefixed `/api`. All request and response bodies are JSON unless note
 `Endpoint`:
 ```json
 {
-  "key": "POST /pet",
+  "endpoint_key": "POST /pet",
   "method": "POST",
   "path": "/pet",
   "operation_id": "addPet",
+  "op_token": "ADDPET",
   "summary": "Add a new pet to the store",
-  "tags": ["pet"],
+  "description": "...",
   "parameters": [{"name":"petId","in":"path","required":true,"schema":{"type":"integer"}}],
-  "request_body_schema": { "...": "flattened, depth-limited" },
+  "request_body": { "...": "flattened, depth-limited" },
   "responses": { "200": {"description":"ok","schema":{}}, "400": {} },
-  "security": ["api_key"]
+  "security": [{"api_key": []}]
 }
 ```
+
+**Now:** this is the shape `parse_spec` returns (it was originally written with `key`,
+`tags` and `request_body_schema`). `GET /specs/{id}/endpoints` serves it.
 
 ### Providers
 
@@ -481,6 +487,21 @@ matching is scoped to the target run's `run_id` (§2.4), matching on `req_id`/`c
 within that run only — never across runs, since those business keys are only unique
 per-run.
 
+### Added after this design
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/specs/from-url` | `{"url": "..."}`; same as `POST /specs?url=`. The URL is fetched server-side through `netguard` (http(s) only, public addresses only, redirects re-checked, 5 MB cap). |
+| `GET` | `/sandbox` | Whether Docker is available to run generated tests. |
+| `POST` | `/runs/{id}/codegen` | `{base_url, test_data, only_approved}`; writes the Maven + TestNG project. |
+| `GET` | `/runs/{id}/codegen/download` | Zip of the generated project. |
+| `GET` / `PUT` | `/runs/{id}/codegen/files/{path}` | Read or hand-edit one generated file (path-traversal checked). |
+| `POST` | `/runs/{id}/execute` | `{network?, timeout}`; runs the project in a container. `network` must be a named Docker network, `bridge` or `none`; `host` and `container:*` are refused. |
+| `GET` | `/runs/{id}/execution` | Last execution result, per test case. |
+| `GET` | `/health` | Liveness. |
+
+Uploads (spec and import) are capped at 10 MB.
+
 ---
 
 ## 5. SSE protocol
@@ -532,42 +553,49 @@ The client reconnects with `EventSource`; on reconnect it re-reads `/runs/{id}` 
 ### 6.1 `spec_parser.py`
 
 ```python
-def parse(raw: str, fmt: str) -> tuple[SpecMeta, list[Endpoint]]:
+def parse_spec(raw: str, format: str) -> tuple[SpecMeta, list[dict]]:
     """Parse an OpenAPI 3.x document into normalized endpoints.
     Raises SpecParseError with a human-readable message."""
 
-def flatten_schema(schema: dict, max_depth: int = 4) -> dict:
+def flatten_schema(obj, components: dict, max_depth: int = 4):
     """Resolve $ref and inline nested schemas up to max_depth.
-    Beyond max_depth, emit {"type": "...", "truncated": true}."""
+    Beyond max_depth, or on a reference cycle, emit {"type": "...", "truncated": true}."""
 ```
 
 **The depth limit is load-bearing, not a nicety.** Real specs contain circular schemas
-(`Pet.category.pets[]`). `jsonref` returns lazy proxies that resolve on access, so a naive
-`json.dumps` recurses until the stack blows. `flatten_schema` is the only place spec
-schemas are turned into prompt text.
+(`Pet.category.pets[]`), and resolving them naively recurses until the stack blows.
+`flatten_schema` is the only place spec schemas are turned into prompt text. It resolves
+only local `#/components/...` references itself, with a cycle guard (**Now:** the design
+named the `jsonref` library, which the code does not use).
 
 Swagger 2.0 is detected and rejected with a clear message in v1.
 
 ### 6.2 `llm.py`
 
 ```python
-PROVIDERS = ["claude_agent_sdk", "anthropic", "openai", "ollama"]
+PROVIDERS = ["claude_agent_sdk", "anthropic", "openai", "ollama"]   # Now: + "omniroute", Ollama first
 
 def probe() -> list[ProviderInfo]:
     """Check availability and list models for each provider. Never raises."""
 
 def generate(prompt: str, provider: str, model: str, timeout: int = 180) -> str:
     """Send one prompt, return raw text. Raises LLMError on transport failure."""
+
+# Now: probe_all_providers(), and an `LLM(provider, model)` dataclass whose async
+# `complete(system, user, ...)` does the dispatch.
 ```
 
 Provider implementations:
 
 | Provider | Client | Transport | Notes |
 |---|---|---|---|
-| `ollama` | `openai.OpenAI(base_url=…/v1, api_key="ollama")` | parse | **Default.** Same client class as OpenAI — base URL is the only difference. |
-| `openai` | `openai.OpenAI()` | parse | Key from `OPENAI_API_KEY`. |
-| `anthropic` | `anthropic.Anthropic()` | parse | Default model `claude-opus-5`. Streams, then takes the final message. |
+| `ollama` | `httpx` → Ollama's native `/api/chat` | parse | **Default.** |
+| `openai` | `httpx` → `/v1/chat/completions` | parse | Key from `OPENAI_API_KEY`. |
+| `anthropic` | `httpx` → Anthropic Messages API | parse | Default model `claude-opus-5`. |
+| `omniroute` | `httpx` → OpenAI-compatible `/chat/completions` on the gateway | parse | Added after this design. Optional `OMNIROUTE_API_KEY`. |
 | `claude_agent_sdk` | `claude_agent_sdk.query()` | **tool** | Handled in `agent.py` (§6.3b), not here. Requires an API key — see the licensing note in PLAN.md §3. |
+
+**Now:** no provider uses a vendor SDK client; every raw provider goes through `httpx`.
 
 Probe logic: `ollama` → `GET /api/tags` succeeds within 2 s; `anthropic`/`openai` → env key
 present; `claude_agent_sdk` → importable **and** an Anthropic key is configured.
@@ -576,6 +604,11 @@ present; `claude_agent_sdk` → importable **and** an Anthropic key is configure
 
 Both stages share one shape: build a prompt, dispatch, validate, persist, emit SSE. The
 functions are parameterized by stage rather than duplicated.
+
+> **Now:** the shipped names are `requirements_prompt` / `cases_prompt` (each returns a
+> `(system, user)` pair), `parse_items` (in `llm.py`), and
+> `generate_requirements_for_endpoint` / `generate_cases_for_endpoint`. The contracts
+> below describe the design, not the exact signatures.
 
 ```python
 def build_requirements_prompt(endpoint: Endpoint) -> str: ...
@@ -639,9 +672,9 @@ below must be covered by at least one case.
 
 Retry prompt appends: `Your previous reply failed validation: {error}. Return corrected JSON only.`
 
-**Concurrency:** endpoints processed with a bounded pool (default 4; 1 for `ollama`, since
-a local model serializes anyway and parallel requests only add latency). Applies
-independently within each stage.
+**Concurrency:** endpoints processed with a bounded pool. Defaults by provider: 1 for
+`ollama` (a local model serializes anyway), 2 for `claude_agent_sdk`, 4 for the hosted APIs;
+`TESTRONAUT_MAX_CONCURRENCY` overrides all of them. Applies independently within each stage.
 
 ### 6.4 `reviewer.py` — critic pass, snapshot+revise, traceability
 
@@ -841,6 +874,13 @@ transports move together automatically.
 
 One workbook, two sheets — a run's requirements and cases are one traceable unit.
 
+> **Now:** the shipped signatures take the run and a session, e.g.
+> `to_json(run_id, session, only_approved=False) -> dict`,
+> `to_xlsx(run_id, session, filepath, only_approved=False)`,
+> `from_json(run_id, session, data) -> ImportSummary` and
+> `from_xlsx(run_id, session, filepath) -> ImportSummary`. Merging happens inside the
+> `from_*` functions.
+
 ```python
 def to_json(requirements: list[Requirement], cases: list[TestCase]) -> bytes: ...
 def to_xlsx(requirements: list[Requirement], cases: list[TestCase]) -> bytes: ...
@@ -914,14 +954,17 @@ arrives when the first real migration is needed.
 
 | Route | Screen | Purpose |
 |---|---|---|
-| `/` | SpecList | Upload a spec, list existing specs and runs |
-| `/specs/:id` | RunConfig | Endpoint checkboxes, provider/model select, category checkboxes |
-| `/runs/:id/progress` | Progress | SSE-driven per-endpoint progress, both stages |
-| `/runs/:id/requirements` | RequirementsReview | Requirement table + findings panel — **Gate 1** |
-| `/runs/:id` | CaseReview | Case table + findings panel + coverage summary — **Gate 2** |
+| `/` | redirects to `/specs` | |
+| `/specs` | SpecList | Upload a spec, list existing specs and runs |
+| `/specs/:specId/run` | RunConfig | Endpoint checkboxes, provider/model select, category checkboxes |
+| `/runs/:runId/progress` | Progress | SSE-driven per-endpoint progress, both stages |
+| `/runs/:runId/requirements` | RequirementsReview | Requirement table + findings panel — **Gate 1** |
+| `/runs/:runId/cases` | CaseReview | Case table + findings panel + coverage summary — **Gate 2** |
+| `/runs/:runId/export` | ExportImport | JSON/Excel export, re-import (added after this design) |
+| `/runs/:runId/automation` | Automation | Generate, review and run the Maven project (added after this design) |
 
 The progress screen routes itself: on `gate_reached {gate: "requirements"}` it navigates
-to `/runs/:id/requirements`; on `gate_reached {gate: "test_cases"}`, to `/runs/:id`.
+to `/runs/:id/requirements`; on `gate_reached {gate: "test_cases"}`, to `/runs/:id/cases`.
 Approving requirements (`POST /runs/{id}/approve-requirements`) routes back to the
 progress screen for stage 2.
 
@@ -978,7 +1021,7 @@ beyond what mirrors the backend Pydantic models.
 | Failure | Handling |
 |---|---|
 | Spec is not OpenAPI 3.x | `400` with a message naming the detected version |
-| `$ref` cannot resolve | Parse continues; that schema becomes `{"unresolved": "<ref>"}` |
+| `$ref` cannot resolve, or is not a local `#/components/...` ref | **Now:** the spec is rejected with a `400` naming the ref (the design had parsing continue with an `unresolved` marker) |
 | Provider unavailable at run start | `400` before the run is created |
 | LLM transport error on one endpoint (either stage) | `endpoint_error` event; that stage's other endpoints continue |
 | Invalid JSON after one retry (raw path) | `endpoint_error` event; run continues |
@@ -1020,8 +1063,12 @@ OPENAI_API_KEY=
 OLLAMA_BASE_URL=http://localhost:11434
 TESTRONAUT_DEFAULT_PROVIDER=ollama
 TESTRONAUT_DB=sqlite:///testronaut.db
-TESTRONAUT_MAX_CONCURRENCY=4
+# TESTRONAUT_MAX_CONCURRENCY=4   # optional override; see §6.3 for per-provider defaults
 ```
+
+**Now:** the shipped `.env.example` also has `OMNIROUTE_BASE_URL` and `OMNIROUTE_API_KEY`.
+`TESTRONAUT_ALLOW_PRIVATE_URLS=1` (off by default, listed in `.env.example`) lets spec
+fetching reach private addresses. See the README's security section.
 
 Keys are read from the environment at request time and never written to the database or
 returned by any endpoint.
@@ -1055,10 +1102,11 @@ fallback so the SSE connection works whether or not it proxies cleanly:
 ```python
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"],
                     allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["*"])
+# Now: origins are http://localhost:5173 and http://127.0.0.1:5173; methods are ["*"].
 ```
 
-In production (Phase 6), `main.py` serves the built frontend as static files from the same
-origin as the API, and both the proxy and the CORS middleware become moot.
+**Now:** FastAPI does not serve the built frontend. In Docker Compose, nginx serves it and
+proxies `/api/` to the backend, so the browser sees one origin.
 
 ---
 
@@ -1090,6 +1138,9 @@ origin as the API, and both the proxy and the CORS middleware become moot.
 | `test_hook_denies_undeclared_status` | A status the spec never declares is denied |
 | `test_hook_denies_review_target_not_found` | `_check_review` denies a finding whose `target_id` doesn't exist in this run |
 | `test_hook_allows_valid_batch` | A clean batch, for each of the four `_check_*` functions, returns `{}` |
+
+**Now:** the suite has grown well beyond this list (it also covers codegen, the assertion
+grammar, Surefire parsing, the sandbox command, and the network guards).
 
 The hook tests call `_check_requirements` / `_check_cases` / `_check_review` directly —
 pure functions with no Agent SDK session needed. The LLM is stubbed with a fixed valid
