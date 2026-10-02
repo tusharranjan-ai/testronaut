@@ -173,10 +173,10 @@ mock Petstore, 4 tests, 3 passed, 1 failed — and the failure was real, the moc
 returning 422 where the spec declares 400. Exactly the discrepancy the tool exists
 to surface.
 
-### Environment change since PLAN §3
+### Sandbox verification
 
-PLAN §3 recorded Docker as "Not installed — no blocker, v1 executes nothing".
-Docker is installed now (29.7.2), which is what made the sandbox buildable. It was
-not running at the end of this session, so the sandbox path is verified by its
-refusal behaviour and unit tests; the Maven run that produced the results above
-was executed directly to exercise the report parser.
+v1 executed nothing, so Docker was not a requirement then. Phase 2 needs it for the
+sandbox. At the time of this work the sandbox path was verified by its refusal
+behaviour and unit tests; the Maven run that produced the results above was executed
+directly to exercise the report parser. Run `docker compose up` and an end-to-end
+`/execute` on a clean machine before relying on it.
