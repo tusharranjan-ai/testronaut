@@ -1,0 +1,19 @@
+# docker-compose.yml builds both images with context: . (repo root), so this is
+# the only .dockerignore Docker actually reads — one per-service file at
+# frontend/.dockerignore or backend/.dockerignore is silently ignored.
+#
+# node_modules/ matters most: without this, the host's locally-built
+# node_modules (macOS binaries, possibly a stale dependency tree) gets copied
+# into the Linux build stage *after* `npm ci` runs, clobbering the Linux
+# native bindings it just installed.
+
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.venv/
+.git/
+frontend/dist/
+workspace/
+testronaut.db
+.env
