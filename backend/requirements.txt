@@ -2,7 +2,7 @@
 # pydantic 2.8.x has no cp314 wheel and cannot build (PyO3 < 3.14) — do not downpin.
 fastapi==0.143.0
 uvicorn[standard]==0.54.0
-sqlmodel==0.0.47
+sqlmodel==0.0.48
 pydantic==2.14.1
 pydantic-settings==2.15.0
 python-multipart==0.0.32
