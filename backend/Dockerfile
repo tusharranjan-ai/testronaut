@@ -3,7 +3,7 @@
 # runs its own daemon.
 FROM docker:28-cli AS dockercli
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 
 # claude_agent_sdk provider runs the Claude Code CLI as a subprocess.
