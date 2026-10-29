@@ -13,5 +13,5 @@ python-dotenv==1.2.4
 structlog==26.1.0
 openpyxl==3.1.5
 pytest==9.1.1
-pytest-asyncio==1.4.0
-claude-agent-sdk==0.2.165
+pytest-asyncio==1.4.1
+claude-agent-sdk==0.2.174
